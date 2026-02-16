@@ -58,6 +58,13 @@ class Utils():
             Os.Directory.CreateDirectory(str(self.app_logs))
 
 
+    def _get_tor_connector(self, tor_enabled=None):
+        if tor_enabled:
+            torrc = self.read_torrc()
+            socks_port = torrc.get("SocksPort")
+            return ProxyConnector.from_url(f'socks5://127.0.0.1:{socks_port}')
+        return None
+
     def get_pools_data(self):
         try:
             pools_json = Os.Path.Combine(str(self.app.paths.app), 'resources', 'pools.json')
@@ -69,12 +76,7 @@ class Utils():
 
     
     async def get_repo_info(self, tor_enabled):
-        if tor_enabled:
-            torrc = self.read_torrc()
-            socks_port = torrc.get("SocksPort")
-            connector = ProxyConnector.from_url(f'socks5://127.0.0.1:{socks_port}')
-        else:
-            connector = None
+        connector = self._get_tor_connector(tor_enabled)
         github_url = "https://api.github.com/repos/SpaceZ-Projects/BTCZWallet-win"
         releases_url = "https://github.com/SpaceZ-Projects/BTCZWallet-win/releases"
         try:
@@ -110,12 +112,7 @@ class Utils():
             'days': '1',
         }
         tor_enabled = self.settings.tor_network()
-        if tor_enabled:
-            torrc = self.read_torrc()
-            socks_port = torrc.get("SocksPort")
-            connector = ProxyConnector.from_url(f'socks5://127.0.0.1:{socks_port}')
-        else:
-            connector = None
+        connector = self._get_tor_connector(tor_enabled)
         try:
             ssl_context = ssl.create_default_context(cafile=certifi.where())
             async with aiohttp.ClientSession(connector=connector) as session:
@@ -128,17 +125,16 @@ class Utils():
             return None
         except asyncio.TimeoutError:
             return None
-        except Exception:
+        except Exception as e:
+            self.app.console.error_log(f"fetch_marketchart error: {e}")
             return None
 
 
     async def is_tor_alive(self):
-        torrc = self.read_torrc()
-        if not torrc:
+        connector = self._get_tor_connector(True)
+        if not connector:
             return None
-        socks_port = torrc.get("SocksPort")
         try:
-            connector = ProxyConnector.from_url(f'socks5://127.0.0.1:{socks_port}')
             ssl_context = ssl.create_default_context(cafile=certifi.where())
             async with aiohttp.ClientSession(connector=connector) as session:
                 async with session.get('http://check.torproject.org', timeout=10, ssl=ssl_context) as response:
@@ -164,8 +160,7 @@ class Utils():
                 if proc.info['name'] == "tor.exe":
                     proc.kill()
         except Exception as e:
-            self.app.console.error_log(f"{e}")
-            pass
+            self.app.console.error_log(f"stop_tor error: {e}")
         
 
     async def make_request(self, key, secret, url, params = None, return_bytes = None):
@@ -173,9 +168,7 @@ class Utils():
             params = {}
         params = {k: str(v) for k, v in params.items()}
 
-        torrc = self.read_torrc()
-        socks_port = torrc.get("SocksPort")
-        connector = ProxyConnector.from_url(f'socks5://127.0.0.1:{socks_port}')
+        connector = self._get_tor_connector(True)
 
         message_payload = json.dumps(params, separators=(",", ":"), sort_keys=True)
         timestamp = datetime.now(timezone.utc).isoformat()
@@ -213,20 +206,17 @@ class Utils():
             self.app.console.error_log(f"Client socket errors: {e}")
             return None
         except (ProxyError, ClientError) as e:
+            self.app.console.error_log(f"make_request proxy/client error: {e}")
             return None
         except Exception as e:
+            self.app.console.error_log(f"make_request error: {e}")
             return None
-        
+
 
     async def fetch_marketcap(self):
         api = "https://api.coingecko.com/api/v3/coins/bitcoinz"
         tor_enabled = self.settings.tor_network()
-        if tor_enabled:
-            torrc = self.read_torrc()
-            socks_port = torrc.get("SocksPort")
-            connector = ProxyConnector.from_url(f'socks5://127.0.0.1:{socks_port}')
-        else:
-            connector = None
+        connector = self._get_tor_connector(tor_enabled)
         try:
             ssl_context = ssl.create_default_context(cafile=certifi.where())
             async with aiohttp.ClientSession(connector=connector) as session:
@@ -474,15 +464,16 @@ class Utils():
                         amount = line.split("Amount:", 1)[1].strip()
                 return address, amount
         except FileNotFoundError:
+            self.app.console.warning_log("URI file not found")
             return None, None
-        
-    
+
+
     def clear_uri_txt(self):
         uri_path = Os.Path.Combine(str(self.app.paths.cache), 'btcz_uri.txt')
         try:
             open(uri_path, "w", encoding="utf-8").close()
         except FileNotFoundError:
-            pass
+            self.app.console.warning_log("URI file not found for clearing")
     
 
     def get_app_theme(self):
@@ -663,12 +654,7 @@ class Utils():
         self.app.console.info_log(f"Downloading BitcoinZ... {url + file_name}")
         text = self.tr.text("download_binary")
         destination = Os.Path.Combine(str(self.app_data), file_name)
-        if tor_enabled:
-            torrc = self.read_torrc()
-            socks_port = torrc.get("SocksPort")
-            connector = ProxyConnector.from_url(f'socks5://127.0.0.1:{socks_port}')
-        else:
-            connector = None
+        connector = self._get_tor_connector(tor_enabled)
         try:
             ssl_context = ssl.create_default_context(cafile=certifi.where())
             async with aiohttp.ClientSession(connector=connector) as session:
@@ -718,12 +704,7 @@ class Utils():
         self.app.console.info_log(f"Downloading Zk params... {base_url}")
         total_files = len(missing_files)
         text = self.tr.text("download_params")
-        if tor_enabled:
-            torrc = self.read_torrc()
-            socks_port = torrc.get("SocksPort")
-            connector = ProxyConnector.from_url(f'socks5://127.0.0.1:{socks_port}')
-        else:
-            connector = None
+        connector = self._get_tor_connector(tor_enabled)
         try:
             ssl_context = ssl.create_default_context(cafile=certifi.where())
             async with aiohttp.ClientSession(connector=connector) as session:
@@ -773,12 +754,7 @@ class Utils():
         total_files = len(bootstrap_files)
         bitcoinz_path = self.get_bitcoinz_path()
         text = self.tr.text("download_bootstrap")
-        if tor_enabled:
-            torrc = self.read_torrc()
-            socks_port = torrc.get("SocksPort")
-            connector = ProxyConnector.from_url(f'socks5://127.0.0.1:{socks_port}')
-        else:
-            connector = None
+        connector = self._get_tor_connector(tor_enabled)
         try:
             ssl_context = ssl.create_default_context(cafile=certifi.where())
             async with aiohttp.ClientSession(connector=connector) as session:
@@ -822,12 +798,7 @@ class Utils():
         self.app.console.info_log(f"Downloading {miner_folder}... {url}")
         destination = Os.Path.Combine(str(self.app_data), file_name)
         miner_dir = Os.Path.Combine(str(self.app_data), miner_folder)
-        if tor_enabled:
-            torrc = self.read_torrc()
-            socks_port = torrc.get("SocksPort")
-            connector = ProxyConnector.from_url(f'socks5://127.0.0.1:{socks_port}')
-        else:
-            connector = None
+        connector = self._get_tor_connector(tor_enabled)
         try:
             ssl_context = ssl.create_default_context(cafile=certifi.where())
             async with aiohttp.ClientSession(connector=connector) as session:

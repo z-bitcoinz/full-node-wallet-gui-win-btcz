@@ -117,7 +117,7 @@ class Menu(Window):
         self._impl.native.Resize += self._handle_on_resize
         self._impl.native.Activated += self._handle_on_activated
         self._impl.native.Deactivate += self._handle_on_deactivated
-        self._impl.native.Move += self._hadler_on_move
+        self._impl.native.Move += self._handler_on_move
         self._impl.native.Shown += self._handler_on_show
 
         self.rtl = None
@@ -934,7 +934,7 @@ class Menu(Window):
             self._is_maximized = None
 
 
-    def _hadler_on_move(self, sender, event):
+    def _handler_on_move(self, sender, event):
         if self.console_toggle:
             self.app.console.move()
 

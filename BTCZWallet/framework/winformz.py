@@ -1531,7 +1531,7 @@ class Table(Forms.DataGridView):
             idx = self.FirstDisplayedScrollingRowIndex
             new_idx = max(0, min(idx + step, self.RowCount - 1))
             self.FirstDisplayedScrollingRowIndex = new_idx
-        except:
+        except Exception:
             pass
 
 
@@ -1585,7 +1585,7 @@ class RichLabel(Forms.RichTextBox):
         if self._font is None:
             try:
                 self.Font = Drawing.Font("Segoe UI Emoji", 10.5)
-            except:
+            except Exception:
                 self.Font = Drawing.Font("Segoe UI Symbol", 10.5)
         else:
             self.Font = self._font

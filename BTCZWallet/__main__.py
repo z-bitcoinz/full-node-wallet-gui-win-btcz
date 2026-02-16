@@ -60,7 +60,7 @@ class BitcoinZGUI(Window):
         )
         self.shadow_window._impl.native.BackColor = Color.BLACK
         self.shadow_window._impl.native.ControlBox = False
-        self.shadow_window._impl.native.Move += self._hadler_on_move
+        self.shadow_window._impl.native.Move += self._handler_on_move
         self.shadow_window._impl.native.KeyDown += Forms.KeyEventHandler(self.on_key_down)
 
         self._impl.native.Owner = self.shadow_window._impl.native
@@ -227,7 +227,7 @@ class BitcoinZGUI(Window):
         self.startup_background.image = "images/startup_y.png"
 
 
-    def _hadler_on_move(self, sender, event):
+    def _handler_on_move(self, sender, event):
         self.app.console.move(True)
         self.size = (self.shadow_window.size.width +2, self.shadow_window.size.height + 32)
         self._impl.native.Left = self.shadow_window._impl.native.Left + 7

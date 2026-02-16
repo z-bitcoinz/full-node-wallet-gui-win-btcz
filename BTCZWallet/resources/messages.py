@@ -1731,7 +1731,7 @@ class Chat(Box):
         )
         try:
             self.message_input._impl.native.Font = Drawing.Font("Segoe UI Emoji", 11)
-        except:
+        except Exception:
             self.message_input._impl.native.Font = Drawing.Font("Segoe UI Symbol", 11)
         if self.rtl:
             self.message_input._impl.native.RightToLeft = RightToLeft.YES
