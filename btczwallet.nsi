@@ -62,13 +62,20 @@
   VIAddVersionKey ProductName "${PRODUCT_NAME} Installer"
   VIAddVersionKey Comments "The installer for ${PRODUCT_NAME}"
   VIAddVersionKey CompanyName "${PRODUCT_NAME}"
-  VIAddVersionKey LegalCopyright "2025 ${PRODUCT_PUBLISHER}"
+  VIAddVersionKey LegalCopyright "2024-2026 ${PRODUCT_PUBLISHER}"
   VIAddVersionKey FileDescription "${PRODUCT_NAME} Installer"
   VIAddVersionKey FileVersion ${PRODUCT_VERSION}
   VIAddVersionKey ProductVersion ${PRODUCT_VERSION}
   VIAddVersionKey InternalName "${PRODUCT_NAME} Installer"
   VIAddVersionKey LegalTrademarks "${PRODUCT_NAME} is a trademark of ${PRODUCT_PUBLISHER}" 
   VIAddVersionKey OriginalFilename "${PRODUCT_NAME}.exe"
+
+  ; Modern Windows compatibility — helps with SmartScreen/AV heuristics
+  ManifestSupportedOS all
+  ManifestDPIAware true
+
+  ; Signing hook (uncomment when using signtool directly)
+  ; !finalize 'signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 "%1"'
 
 ;--------------------------------
 ;Interface Settings

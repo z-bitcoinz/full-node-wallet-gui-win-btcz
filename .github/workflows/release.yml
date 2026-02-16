@@ -1,0 +1,224 @@
+name: Build, Sign & Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+  id-token: write
+
+env:
+  FORCE_COLOR: "1"
+  PYTHON_VERSION: "3.12"
+  NSIS_VERSION: "3.10"
+
+jobs:
+  # ──────────────────────────────────────────────
+  # Job 1: Build the unsigned installer on Windows
+  # ──────────────────────────────────────────────
+  build:
+    runs-on: windows-latest
+    name: Build Installer
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract version from pyproject.toml
+        id: version
+        shell: pwsh
+        run: |
+          $content = Get-Content pyproject.toml -Raw
+          if ($content -match 'version\s*=\s*"([^"]+)"') {
+            $version = $Matches[1]
+            echo "VERSION=$version" >> $env:GITHUB_OUTPUT
+            echo "Detected version: $version"
+          } else {
+            Write-Error "Could not extract version from pyproject.toml"
+            exit 1
+          }
+
+      - name: Setup Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Create virtual environment and install dependencies
+        run: |
+          python -m venv env
+          env\Scripts\python -m pip install --upgrade pip
+          env\Scripts\pip install briefcase==0.3.24
+
+      - name: Build app with Briefcase
+        run: |
+          env\Scripts\briefcase build
+
+      - name: Install NSIS
+        shell: pwsh
+        run: |
+          choco install nsis --version=${{ env.NSIS_VERSION }} -y
+
+      - name: Build NSIS installer
+        shell: pwsh
+        run: |
+          $makensis = "C:\Program Files (x86)\NSIS\makensis.exe"
+          if (!(Test-Path $makensis)) {
+            Write-Error "makensis.exe not found at $makensis"
+            exit 1
+          }
+          & $makensis btczwallet.nsi
+
+      - name: Upload unsigned installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-installer
+          path: build\*.exe
+          if-no-files-found: error
+
+    outputs:
+      version: ${{ steps.version.outputs.VERSION }}
+      installer_name: BTCZWallet-${{ steps.version.outputs.VERSION }}-setup-x64.exe
+
+  # ──────────────────────────────────────────────
+  # Job 2: Code-sign the installer
+  # ──────────────────────────────────────────────
+  sign:
+    runs-on: ubuntu-latest
+    needs: build
+    name: Sign Installer
+    # Run if SignPath OR self-sign secrets are configured
+    if: |
+      (vars.SIGNPATH_ORGANIZATION_ID != '' && secrets.SIGNPATH_API_TOKEN != '') ||
+      secrets.SELFSIGN_CERTIFICATE_BASE64 != ''
+
+    steps:
+      # ── Option A: SignPath.io (preferred for OSS) ──
+      - name: Download unsigned installer
+        uses: actions/download-artifact@v4
+        with:
+          name: unsigned-installer
+          path: unsigned
+
+      - name: Sign with SignPath
+        if: vars.SIGNPATH_ORGANIZATION_ID != '' && secrets.SIGNPATH_API_TOKEN != ''
+        id: signpath
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: btczwallet-win
+          signing-policy-slug: release-signing
+          artifact-configuration-slug: initial
+          github-artifact-id: unsigned-installer
+          wait-for-completion: true
+          output-artifact-directory: signed
+          wait-for-completion-timeout-in-seconds: 600
+
+      # ── Option B: Self-signed certificate (fallback) ──
+      - name: Self-sign with certificate
+        if: steps.signpath.outcome == 'skipped' && secrets.SELFSIGN_CERTIFICATE_BASE64 != ''
+        shell: bash
+        run: |
+          echo "::group::Setting up self-signing"
+          sudo apt-get update && sudo apt-get install -y osslsigncode
+
+          # Decode certificate
+          echo "${{ secrets.SELFSIGN_CERTIFICATE_BASE64 }}" | base64 -d > cert.pfx
+
+          mkdir -p signed
+          INSTALLER=$(ls unsigned/*.exe | head -1)
+          FILENAME=$(basename "$INSTALLER")
+
+          osslsigncode sign \
+            -pkcs12 cert.pfx \
+            -pass "${{ secrets.SELFSIGN_CERTIFICATE_PASSWORD }}" \
+            -n "BTCZWallet" \
+            -i "https://getbtcz.com" \
+            -t http://timestamp.digicert.com \
+            -in "$INSTALLER" \
+            -out "signed/$FILENAME"
+
+          rm -f cert.pfx
+          echo "::endgroup::"
+
+      - name: Upload signed installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: signed-installer
+          path: signed\*.exe
+          if-no-files-found: error
+
+  # ──────────────────────────────────────────────
+  # Job 3: Create GitHub Release
+  # ──────────────────────────────────────────────
+  release:
+    runs-on: ubuntu-latest
+    needs: [build, sign]
+    name: Create Release
+    # Only create releases on tag pushes; allow sign job to be skipped
+    if: always() && startsWith(github.ref, 'refs/tags/v') && needs.build.result == 'success'
+
+    steps:
+      # Try signed first, fall back to unsigned
+      - name: Download signed installer
+        id: download-signed
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: signed-installer
+          path: release
+
+      - name: Download unsigned installer (fallback)
+        if: steps.download-signed.outcome == 'failure'
+        uses: actions/download-artifact@v4
+        with:
+          name: unsigned-installer
+          path: release
+
+      - name: Determine signing status
+        id: signing-status
+        shell: bash
+        run: |
+          if [ "${{ steps.download-signed.outcome }}" == "success" ]; then
+            echo "SIGNED=true" >> "$GITHUB_OUTPUT"
+            echo "Installer is signed"
+          else
+            echo "SIGNED=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Installer is NOT signed"
+          fi
+
+      - name: Detect prerelease
+        id: prerelease
+        shell: bash
+        run: |
+          TAG="${{ github.ref_name }}"
+          if [[ "$TAG" =~ (rc|beta|alpha|dev) ]]; then
+            echo "IS_PRERELEASE=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "IS_PRERELEASE=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: BTCZWallet v${{ needs.build.outputs.version }}
+          prerelease: ${{ steps.prerelease.outputs.IS_PRERELEASE }}
+          generate_release_notes: true
+          body: |
+            ## BTCZWallet v${{ needs.build.outputs.version }}
+
+            **Signing status:** ${{ steps.signing-status.outputs.SIGNED == 'true' && 'Signed' || 'Unsigned — install may trigger Windows SmartScreen' }}
+
+            ### Installation
+            1. Download the `.exe` installer below
+            2. Run the installer (you may need to click "More info" → "Run anyway" if unsigned)
+            3. Follow the setup wizard
+
+            ### Verify signature (signed builds)
+            Right-click the `.exe` → Properties → Digital Signatures tab
+          files: release/*.exe
